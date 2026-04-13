@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getDecodedToken } from '@cashu/cashu-ts';
+import webpush from 'web-push';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +14,86 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3232;
 const LNBITS_URL = process.env.LNBITS_URL || 'https://lnbits.cz';
+
+// === Web Push ===
+webpush.setVapidDetails(
+    process.env.VAPID_EMAIL,
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+);
+
+const SUBS_FILE = path.join(__dirname, 'push-subscriptions.json');
+// Map: inkey → { subscription, lastHash }
+const pushSubs = new Map(
+    fs.existsSync(SUBS_FILE) ? JSON.parse(fs.readFileSync(SUBS_FILE, 'utf8')) : []
+);
+
+function savePushSubs() {
+    fs.writeFileSync(SUBS_FILE, JSON.stringify([...pushSubs]));
+}
+
+async function sendPush(inkey, state, payload) {
+    try {
+        await webpush.sendNotification(state.subscription, JSON.stringify(payload));
+        console.log(`[push] odesláno: ${payload.title}`);
+    } catch (err) {
+        console.error(`[push] chyba odesílání (${err.statusCode}):`, err.body || err.message);
+        if (err.statusCode === 410 || err.statusCode === 404) {
+            pushSubs.delete(inkey);
+            savePushSubs();
+        }
+    }
+}
+
+async function checkIncomingPayments() {
+    for (const [inkey, state] of pushSubs) {
+        try {
+            const r = await fetch(`${LNBITS_URL}/api/v1/payments?limit=20`, {
+                headers: { 'X-Api-Key': inkey }
+            });
+            if (!r.ok) continue;
+            const payments = await r.json();
+            if (!Array.isArray(payments)) continue;
+
+            // Jen potvrzené příchozí platby
+            const received = payments.filter(p => p.amount > 0 && p.status === 'success');
+            if (received.length === 0) continue;
+
+            const latestHash = received[0].payment_hash;
+
+            if (state.lastHash === null) {
+                state.lastHash = latestHash;
+                savePushSubs();
+                continue;
+            }
+
+            // Najdi všechny nové platby od lastHash
+            const newPayments = [];
+            for (const p of received) {
+                if (p.payment_hash === state.lastHash) break;
+                newPayments.push(p);
+            }
+
+            for (const p of newPayments) {
+                const sats = Math.floor(p.amount / 1000);
+                const memo = p.memo || 'Platba přijata';
+                await sendPush(inkey, state, {
+                    title: `+${sats.toLocaleString('cs-CZ')} sats`,
+                    body: memo,
+                });
+            }
+
+            if (newPayments.length > 0) {
+                state.lastHash = latestHash;
+                savePushSubs();
+            }
+        } catch (e) {
+            console.error('[push] check error:', e.message);
+        }
+    }
+}
+
+setInterval(checkIncomingPayments, 30_000);
 
 // Při každém startu serveru obnov timestamp v sw.js → klienti dostanou update notifikaci
 const swPath = path.join(__dirname, 'public', 'sw.js');
@@ -347,6 +428,29 @@ app.post('/api/cashu/redeem', async (req, res) => {
 
 // Noop pro iOS password save form
 app.post('/api/save-noop', (_req, res) => res.send(''));
+
+// Push — vrátí VAPID public key
+app.get('/api/push/vapid-key', (_req, res) => {
+    res.json({ key: process.env.VAPID_PUBLIC_KEY });
+});
+
+// Push — přihlásit odběr
+app.post('/api/push/subscribe', (req, res) => {
+    const inkey = req.headers['x-wallet-key'];
+    const { subscription } = req.body;
+    if (!inkey || !subscription) return res.status(400).json({ error: 'Chybí data' });
+    pushSubs.set(inkey, { subscription, lastHash: null });
+    savePushSubs();
+    res.json({ ok: true });
+});
+
+// Push — odhlásit odběr
+app.post('/api/push/unsubscribe', (req, res) => {
+    const inkey = req.headers['x-wallet-key'];
+    pushSubs.delete(inkey);
+    savePushSubs();
+    res.json({ ok: true });
+});
 
 // Fallback pro PWA
 app.use((req, res) => {

@@ -5,3 +5,4 @@ node_modules/
 .env.*.local
 *.log
 public/sw.js
+push-subscriptions.json

@@ -224,6 +224,41 @@ function parseTxDate(tx) {
     return isNaN(d) ? null : d;
 }
 
+function renderTxItem(tx, today) {
+    const received = tx.amount > 0;
+    const fee  = Math.abs(tx.fee || 0);
+    const sats = Math.floor((Math.abs(tx.amount) + (received ? 0 : fee)) / 1000);
+    const memo = escHtml(tx.memo || tx.extra?.comment || (received ? 'Přijato' : 'Odesláno'));
+    const d = parseTxDate(tx);
+    const isToday = d && d.toDateString() === today.toDateString();
+    const timeStr = !d ? '—'
+        : isToday
+            ? d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })
+            : d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'short' });
+    const failed  = tx.status === 'failed'  || tx.status === 'error';
+    const pending = tx.status === 'pending' || (!tx.status && tx.pending && !failed);
+    const statusLabel = failed  ? ['tx-status-failed',  'selhalo']
+                      : pending ? ['tx-status-pending', 'čeká']
+                      :           ['tx-status-ok',      'potvrzeno'];
+    const icon = failed
+        ? `<svg class="tx-failed-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+        : pending
+            ? `<svg class="tx-pending-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`
+            : '';
+    const cls  = failed ? ' tx-failed' : pending ? ' tx-pending' : '';
+    const hash = tx.payment_hash || tx.checking_id || '';
+    return `<div class="tx-item${cls}" data-hash="${escHtml(hash)}" style="cursor:pointer">
+        <div class="tx-info">
+            <span class="tx-memo">${memo}</span>
+            <span class="tx-time">${timeStr} · <span class="${statusLabel[0]}">${statusLabel[1]}</span></span>
+        </div>
+        <div class="tx-right">
+            ${icon}
+            <span class="tx-amount ${received ? 'tx-received' : 'tx-sent'}">${received ? '+' : '−'}${sats.toLocaleString('cs-CZ')} sats</span>
+        </div>
+    </div>`;
+}
+
 // === HISTORIE ===
 async function fetchHistory() {
     if (!userKeys.inkey) return;
@@ -244,41 +279,13 @@ async function fetchHistory() {
         const today = new Date();
         txHistory.innerHTML =
             '<p class="tx-history-label">Transakce</p>' +
-            txs.map(tx => {
-                const received = tx.amount > 0;
-                const fee = Math.abs(tx.fee || 0);
-                const sats = Math.floor((Math.abs(tx.amount) + (received ? 0 : fee)) / 1000);
-                const memo = escHtml(tx.memo || tx.extra?.comment || (received ? 'Přijato' : 'Odesláno'));
-                const d = parseTxDate(tx);
-                const isToday = d && d.toDateString() === today.toDateString();
-                const timeStr = !d ? '—'
-                    : isToday
-                        ? d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })
-                        : d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'short' });
-                const failed  = tx.status === 'failed'  || tx.status === 'error';
-                const pending = tx.status === 'pending' || (!tx.status && tx.pending && !failed);
-                const statusLabel = failed  ? ['tx-status-failed',  'selhalo']
-                                  : pending ? ['tx-status-pending', 'čeká']
-                                  :           ['tx-status-ok',      'potvrzeno'];
-                const icon = failed
-                    ? `<svg class="tx-failed-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
-                    : pending
-                        ? `<svg class="tx-pending-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`
-                        : '';
-                const cls = failed ? ' tx-failed' : pending ? ' tx-pending' : '';
-                const hash = tx.payment_hash || tx.checking_id || '';
-                return `<div class="tx-item${cls}" data-hash="${escHtml(hash)}" style="cursor:pointer">
-                    <div class="tx-info">
-                        <span class="tx-memo">${memo}</span>
-                        <span class="tx-time">${timeStr} · <span class="${statusLabel[0]}">${statusLabel[1]}</span></span>
-                    </div>
-                    <div class="tx-right">
-                        ${icon}
-                        <span class="tx-amount ${received ? 'tx-received' : 'tx-sent'}">${received ? '+' : '−'}${sats.toLocaleString('cs-CZ')} sats</span>
-                    </div>
-                </div>`;
-            }).join('');
+            txs.map(tx => renderTxItem(tx, today)).join('');
     } catch (e) {}
+}
+
+async function refreshWallet() {
+    await fetchBalance();
+    fetchHistory();
 }
 
 // === INIT ===
@@ -413,9 +420,8 @@ async function authenticateWithLNBits(seed) {
             lnAddressRow.classList.remove('hidden');
             showPanel(mainButtons);
             hideStatus();
-            fetchBalance();
-            fetchHistory();
-            balanceInterval = setInterval(() => { fetchBalance(); fetchHistory(); }, 30000);
+            refreshWallet();
+            balanceInterval = setInterval(refreshWallet, 30000);
         } else {
             showStatus('Chyba: peněženka se nenačetla.');
         }
@@ -625,8 +631,7 @@ async function doWithdraw(data, sats) {
         const w = await postJson('/api/lnurl/withdraw', { callback: data.callback, k1: data.k1, invoice: inv.payment_request });
         if (w.error) throw new Error(w.error);
 
-        await fetchBalance();
-        fetchHistory();
+        await refreshWallet();
         resetUI();
         showSuccess();
     } catch (e) { showStatus('LNURL-w chyba: ' + e.message); resetUI(); }
@@ -655,8 +660,7 @@ async function doLnurlPay(data, sats) {
         const pd = await walletPost('/api/pay', { invoice: d.pr });
         if (pd.error) throw new Error(pd.error);
 
-        await fetchBalance();
-        fetchHistory();
+        await refreshWallet();
         resetUI();
         showSuccess();
     } catch (e) { showStatus('Chyba: ' + e.message); resetUI(); }
@@ -699,8 +703,7 @@ async function handleCashu(token) {
     try {
         const d = await walletPost('/api/cashu/redeem', { token });
         if (d.error) throw new Error(d.error);
-        await fetchBalance();
-        fetchHistory();
+        await refreshWallet();
         resetUI();
         showSuccess();
     } catch (e) { showStatus('Cashu chyba: ' + e.message); resetUI(); }
@@ -760,8 +763,7 @@ btnGenerateInvoice.addEventListener('click', guard(async () => {
                 const p = await walletGet(`/api/checkpayment?payment_hash=${data.payment_hash}`);
                 if (p.paid) {
                     stopReceivePolling();
-                    await fetchBalance();
-                    fetchHistory();
+                    await refreshWallet();
                     resetUI();
                     showSuccess();
                 }
@@ -801,8 +803,7 @@ btnConfirmPay.addEventListener('click', guard(async () => {
     try {
         const d = await walletPost('/api/pay', { invoice: currentInvoice });
         if (d.error) throw new Error(d.error);
-        await fetchBalance();
-        fetchHistory();
+        await refreshWallet();
         resetUI();
         showSuccess();
     } catch (e) {
@@ -909,8 +910,7 @@ function showTxDetail(tx) {
                 if (p.paid) {
                     clearInterval(pollInterval);
                     txDetailOverlay.classList.add('hidden');
-                    await fetchBalance();
-                    fetchHistory();
+                    await refreshWallet();
                     showSuccess();
                 }
             } catch (e) {}
@@ -993,6 +993,51 @@ btnLogoutConfirm.addEventListener('click', () => {
     sessionStorage.removeItem('gwallet_seed');
     location.reload();
 });
+
+// === PUSH NOTIFIKACE ===
+const btnNotify = document.getElementById('btn-notify');
+
+async function subscribePush() {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') { showStatus('Notifikace zamítnuty.'); return; }
+
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await fetch('/api/push/vapid-key').then(r => r.json());
+
+    const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: key,
+    });
+
+    const result = await walletPost('/api/push/subscribe', { subscription: sub.toJSON() });
+    if (result.ok) {
+        localStorage.setItem('push-enabled', '1');
+        if (btnNotify) { btnNotify.textContent = 'Notifikace: zapnuto'; btnNotify.classList.add('active'); }
+        showStatus('Notifikace zapnuty ✓');
+    }
+}
+
+async function unsubscribePush() {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    await walletPost('/api/push/unsubscribe', {});
+    localStorage.removeItem('push-enabled');
+    if (btnNotify) { btnNotify.textContent = 'Notifikace: vypnuto'; btnNotify.classList.remove('active'); }
+    showStatus('Notifikace vypnuty.');
+}
+
+if (btnNotify) {
+    const enabled = localStorage.getItem('push-enabled') === '1';
+    btnNotify.textContent = enabled ? 'Notifikace: zapnuto' : 'Notifikace: vypnuto';
+    if (enabled) btnNotify.classList.add('active');
+
+    btnNotify.addEventListener('click', async () => {
+        const enabled = localStorage.getItem('push-enabled') === '1';
+        if (enabled) await unsubscribePush(); else await subscribePush();
+    });
+}
 
 // === SERVICE WORKER ===
 if ('serviceWorker' in navigator) {
