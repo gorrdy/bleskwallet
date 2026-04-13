@@ -1,0 +1,1 @@
+var process={env:{NODE_ENV:'production'},version:'v20',browser:true,nextTick:function(f){setTimeout(f,0)},emitWarning:function(){},noDeprecation:false,throwDeprecation:false,traceDeprecation:false,pid:1,stderr:{write:function(){}}};

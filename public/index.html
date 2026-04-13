@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BleskWallet</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" integrity="sha384-Htz1SE4Sl5aitpvFgr2j0sfsGUIuSXI6t8hEyrlQ93zflEF3a29bH2AvkUROUw7J" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
+    <script src="process-polyfill.js"></script>
+    <script src="buffer.js"></script>
+    <script src="buffer-init.js"></script>
+    <script src="bc-ur.js"></script>
+</head>
+<body>
+
+    <!-- Add to Home Screen banner -->
+    <div id="a2hs-banner" class="hidden a2hs-banner">
+        <div class="a2hs-content">
+            <span class="a2hs-icon">⚡</span>
+            <div class="a2hs-text">
+                <strong>Přidat na plochu</strong>
+                <span id="a2hs-hint"></span>
+            </div>
+        </div>
+        <div class="a2hs-buttons">
+            <button id="a2hs-add" class="btn btn-receive">Přidat</button>
+            <button id="a2hs-dismiss" class="btn-icon-close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Animace úspěchu -->
+    <div id="success-overlay" class="hidden success-overlay">
+        <div class="success-circle">
+            <svg viewBox="0 0 52 52" fill="none">
+                <circle class="success-ring" cx="26" cy="26" r="24" stroke="#28a745" stroke-width="2.5"/>
+                <polyline class="success-check" points="14,27 22,35 38,17" stroke="#28a745" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
+    </div>
+
+    <!-- Uvítací screen -->
+    <div id="welcome-screen" class="hidden setup-overlay">
+        <div class="welcome-logo">⚡</div>
+        <h1 class="welcome-title">BleskWallet</h1>
+        <p class="welcome-sub">Lightning peněženka</p>
+        <div class="welcome-actions">
+            <button id="btn-create-wallet" class="btn btn-receive full-width">Vytvořit peněženku</button>
+            <button id="btn-restore-wallet" class="btn btn-secondary full-width mt-10">Přihlásit se / Obnovit</button>
+        </div>
+    </div>
+
+    <!-- Screen pro zápis seedu (nová peněženka) -->
+    <div id="setup-screen" class="hidden setup-overlay">
+        <h2>Záloha peněženky</h2>
+        <p>Těchto 12 slov je tvůj jediný klíč. Pečlivě si je opiš — kdo má tato slova, má tvé peníze.</p>
+        <div class="seed-box-wrap">
+            <input id="seed-phrase" type="password" autocomplete="new-password" class="seed-box seed-phrase-input" readonly />
+            <div class="seed-box-icons">
+                <button id="btn-toggle-seed" type="button" class="btn-copy-icon" title="Zobrazit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                </button>
+                <button id="btn-copy-seed-setup" type="button" class="btn-copy-icon" title="Kopírovat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <iframe name="save-frame" style="display:none"></iframe>
+        <form id="seed-save-form" action="/api/save-noop" method="post" target="save-frame" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;overflow:hidden">
+            <input id="seed-save-username" type="text" autocomplete="username" />
+            <input id="seed-save-password" type="password" autocomplete="new-password" />
+            <button type="submit" id="seed-save-submit"></button>
+        </form>
+        <button id="btn-save-passwords" class="btn btn-secondary full-width">Uložit do hesel</button>
+        <button id="btn-seed-saved" class="btn btn-receive full-width mt-10">Mám uloženo, vstoupit</button>
+    </div>
+
+    <!-- Screen pro obnovu seedu -->
+    <div id="restore-screen" class="hidden setup-overlay">
+        <h2 id="restore-title">Obnovit peněženku</h2>
+        <p id="restore-desc">Zadej svých 12 slov oddělených mezerami.</p>
+        <form action="#" method="post" style="width:100%;display:contents">
+            <input type="text" autocomplete="username" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" tabindex="-1" />
+            <div class="seed-box-wrap" style="width:100%">
+                <input id="restore-input" type="password" autocomplete="current-password" class="seed-input seed-input-sm" placeholder="slovo1 slovo2 slovo3 …" autocorrect="off" autocapitalize="off" spellcheck="false" style="padding-right:48px" />
+                <div class="seed-box-icons">
+                    <button id="btn-toggle-restore" type="button" class="btn-copy-icon" title="Zobrazit">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </form>
+        <p id="restore-error" class="restore-error hidden"></p>
+        <button id="btn-restore-confirm" class="btn btn-receive full-width">Přihlásit se</button>
+        <button id="btn-restore-back" class="btn btn-secondary full-width">Zpět</button>
+    </div>
+
+    <!-- Detail transakce overlay -->
+    <div id="tx-detail-overlay" class="hidden settings-overlay">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2 id="tx-detail-title">Transakce</h2>
+                <button id="btn-close-tx-detail" class="btn-icon-close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="tx-detail-body"></div>
+        </div>
+    </div>
+
+    <!-- Nastavení overlay -->
+    <div id="settings-overlay" class="hidden settings-overlay">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2>Nastavení</h2>
+                <button id="btn-close-settings" class="btn-icon-close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="settings-section">
+                <p class="settings-label">Obnovovací fráze</p>
+                <p class="settings-desc">Tato slova jsou tvůj jediný klíč. Nikomu je neukazuj.</p>
+                <div id="seed-display" class="seed-box seed-hidden">
+                    <span class="seed-mask">••• ••• ••• ••• ••• ••• ••• ••• ••• ••• ••• •••</span>
+                    <span class="seed-words hidden"></span>
+                </div>
+                <div class="settings-actions">
+                    <button id="btn-reveal-seed" class="btn btn-secondary">Zobrazit</button>
+                    <button id="btn-copy-seed" class="btn btn-secondary">Kopírovat</button>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <p class="settings-label">Účet</p>
+                <p class="settings-desc">Odhlášením smažeš peněženku z tohoto zařízení. Bez obnovovací fráze ztratíš přístup.</p>
+                <button id="btn-logout" class="btn btn-logout full-width">Odhlásit se</button>
+                <div id="logout-confirm" class="hidden">
+                    <p class="settings-desc warn">Opravdu? Ujisti se, že máš obnovovací frázi uloženou.</p>
+                    <div class="settings-actions">
+                        <button id="btn-logout-cancel" class="btn btn-secondary">Zrušit</button>
+                        <button id="btn-logout-confirm" class="btn btn-logout">Smazat a odhlásit</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Banner: nová verze -->
+    <div id="update-banner" class="hidden update-banner">
+        <span>Nová verze k dispozici</span>
+        <button id="btn-update" class="btn btn-receive">Aktualizovat</button>
+    </div>
+
+    <div class="wallet-container">
+
+        <!-- Zůstatek -->
+        <header class="balance-section">
+            <p class="subtitle">Zůstatek</p>
+            <h1 class="balance"><span id="balance-display"></span><svg id="balance-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke="#333"/><path d="M12 2a10 10 0 0 1 10 10" stroke="var(--orange)"/></svg> <span class="unit">sats</span></h1>
+            <button id="btn-settings" class="btn-hamburger" title="Nastavení">
+                <span></span><span></span><span></span>
+            </button>
+        </header>
+
+        <!-- Stavová zpráva -->
+        <div id="status-message" class="status hidden"></div>
+
+        <!-- Panel: Zadat částku (příjem) -->
+        <div id="amount-input-section" class="panel hidden">
+            <div id="ln-address-row" class="ln-address-row hidden">
+                <span id="ln-address-display" class="ln-address-text"></span>
+                <button id="btn-copy-lnaddress" type="button" class="btn-copy-icon" title="Kopírovat adresu">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                </button>
+            </div>
+            <input type="number" id="invoice-amount" placeholder="Částka v sats" inputmode="numeric" />
+            <button id="btn-generate-invoice" class="btn btn-receive full-width mt-10">Vygenerovat QR</button>
+            <button id="btn-cancel-receive" class="btn btn-secondary full-width mt-10">Zrušit</button>
+        </div>
+
+        <!-- Panel: QR kód (příjem) -->
+        <div id="qr-display-container" class="panel hidden">
+            <p class="panel-label">Čekám na platbu…</p>
+            <div id="qr-display"></div>
+            <input type="text" id="invoice-string-display" class="invoice-string" readonly title="Klepnutím zkopírovat" />
+            <button id="btn-close-qr" class="btn btn-secondary full-width mt-10">Zrušit</button>
+        </div>
+
+        <!-- Panel: Potvrzení platby -->
+        <div id="pay-confirm-section" class="panel hidden">
+            <p class="panel-label">Potvrdit platbu</p>
+            <div class="pay-amount" id="pay-amount-display">— sats</div>
+            <p class="pay-desc" id="pay-desc-display"></p>
+            <p class="pay-invoice-preview" id="pay-invoice-preview"></p>
+            <button id="btn-confirm-pay" class="btn btn-send full-width mt-10">Zaplatit</button>
+            <button id="btn-cancel-pay" class="btn btn-secondary full-width mt-10">Zrušit</button>
+        </div>
+
+        <!-- Panel: LNURL-p / Lightning adresa -->
+        <div id="lnurlp-section" class="panel hidden">
+            <p class="panel-label" id="lnurlp-title">Lightning platba</p>
+            <p class="pay-desc" id="lnurlp-domain"></p>
+            <p class="pay-desc" id="lnurlp-description"></p>
+            <input type="number" id="lnurlp-amount" class="lnurlp-amount-input" inputmode="numeric" placeholder="0" />
+            <input type="range" id="lnurlp-slider" class="amount-slider hidden" />
+            <p class="amount-hint" id="lnurlp-hint"></p>
+            <button id="btn-lnurlp-confirm" class="btn btn-send full-width mt-10">Zaplatit</button>
+            <button id="btn-lnurlp-cancel" class="btn btn-secondary full-width mt-10">Zrušit</button>
+        </div>
+
+        <!-- Panel: Zadat platbu ručně -->
+        <div id="send-input-section" class="panel hidden">
+            <div class="send-input-wrap">
+                <textarea id="send-input" class="send-input-area" placeholder="Invoice, LN adresa nebo LNURL…" autocorrect="off" autocapitalize="off" spellcheck="false" rows="3"></textarea>
+                <button id="btn-send-scan" class="btn-send-qr" title="Skenovat QR">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+                        <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                        <rect x="7" y="7" width="3" height="3" fill="currentColor" stroke="none"/>
+                        <rect x="14" y="7" width="3" height="3" fill="currentColor" stroke="none"/>
+                        <rect x="7" y="14" width="3" height="3" fill="currentColor" stroke="none"/>
+                        <path d="M14 14h3v3"/>
+                    </svg>
+                </button>
+            </div>
+            <button id="btn-send-confirm" class="btn btn-send full-width mt-10">Pokračovat</button>
+            <button id="btn-send-cancel" class="btn btn-secondary full-width mt-10">Zrušit</button>
+        </div>
+
+        <!-- Panel: Skenování QR (kamera) -->
+        <div id="scan-section" class="hidden">
+            <div id="qr-reader" class="qr-reader-box"></div>
+            <p id="bcur-progress" class="hidden amount-hint" style="text-align:center;margin-top:8px"></p>
+            <button id="btn-cancel-scan" class="btn btn-secondary full-width mt-10">Zrušit</button>
+        </div>
+
+        <!-- Historie transakcí -->
+        <div id="tx-history" class="tx-history hidden"></div>
+
+        <!-- Hlavní tlačítka -->
+        <div class="action-buttons" id="main-buttons">
+            <button id="btn-receive" class="btn btn-receive">PŘIJMOUT</button>
+            <button id="btn-scan" class="btn-scan-icon" title="Skenovat">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+                    <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                    <rect x="7" y="7" width="3" height="3" fill="currentColor" stroke="none"/>
+                    <rect x="14" y="7" width="3" height="3" fill="currentColor" stroke="none"/>
+                    <rect x="7" y="14" width="3" height="3" fill="currentColor" stroke="none"/>
+                    <path d="M14 14h3v3"/>
+                </svg>
+                <span>SKENOVAT</span>
+            </button>
+            <button id="btn-send" class="btn btn-send">ZAPLATIT</button>
+        </div>
+
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
