@@ -1,6 +1,6 @@
 {
   "name": "Blesk Wallet",
-  "short_name": "Blesk",
+  "short_name": "BleskWallet",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#121212",
